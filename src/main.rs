@@ -27,29 +27,26 @@ async fn main(_spawner: Spawner) {
     // Create and initialize a delay variable to manage delay loop
     let _del_var = 2000;
 
-    let ch_a = PwmPin::new_ch1(p.PE3, OutputType::PushPull);
-    let ch_b = PwmPin::new_ch2(p.PD13, OutputType::PushPull);
+    let ch_a_right = PwmPin::new_ch1(p.PD12, OutputType::PushPull);
+    let ch_b_right = PwmPin::new_ch2(p.PD13, OutputType::PushPull);
 
-    let mut pwm_a = SimplePwm::new(p.TIM3, Some(ch_a), None, None, None, khz(10), Default::default());
-    let mut pwm_b = SimplePwm::new(p.TIM4, None, Some(ch_b), None, None, khz(10), Default::default());
+    let mut pwm_r = SimplePwm::new(p.TIM4, Some(ch_a_right), Some(ch_b_right), None, None, khz(10), Default::default());
+    let max_r = pwm_r.get_max_duty();
 
-    let max_a = pwm_a.get_max_duty();
-    let max_b = pwm_b.get_max_duty();
-
-    pwm_a.enable(Channel::Ch1);
-    pwm_b.enable(Channel::Ch2);
+    pwm_r.enable(Channel::Ch1);
+    pwm_r.enable(Channel::Ch2);
 
     info!("PWM initialized");
-    info!("PWM max duty {}", max_a);
-//    let button = Input::new(p.PC13, Pull::Down);
+    info!("PWM max duty {}", max_r);
 
     loop {
         button.wait_for_rising_edge().await;
-        pwm_a.set_duty(Channel::Ch1, max_a);
-        pwm_b.set_duty(Channel::Ch2, max_b);
+        pwm_r.set_duty(Channel::Ch1, max_r);
+        pwm_r.set_duty(Channel::Ch2, 0);
         Timer::after_millis(1500).await;
-        pwm_a.set_duty(Channel::Ch1, 0);
-        pwm_b.set_duty(Channel::Ch2, 0);
+        pwm_r.set_duty(Channel::Ch1, 0);
+        pwm_r.set_duty(Channel::Ch2, max_r);
         Timer::after_millis(1000).await;
+        pwm_r.set_duty(Channel::Ch2, 0);
     }
 }
