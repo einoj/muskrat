@@ -19,13 +19,8 @@ async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
     info!("Muskrat OS!");
 
-    // Configure the button pin (if needed) and obtain handler.
-    // On the Nucleo FR401 there is a button connected to pin PC13.
     let button = Input::new(p.PD1, Pull::None);
     let mut button = ExtiInput::new(button, p.EXTI1);
-
-    // Create and initialize a delay variable to manage delay loop
-    let _del_var = 2000;
 
     let ch_a_right = PwmPin::new_ch1(p.PD12, OutputType::PushPull);
     let ch_b_right = PwmPin::new_ch2(p.PD13, OutputType::PushPull);
@@ -36,17 +31,30 @@ async fn main(_spawner: Spawner) {
     pwm_r.enable(Channel::Ch1);
     pwm_r.enable(Channel::Ch2);
 
+    let ch_a_left = PwmPin::new_ch1(p.PE3, OutputType::PushPull);
+    let ch_b_left = PwmPin::new_ch2(p.PE4, OutputType::PushPull);
+    let mut pwm_l = SimplePwm::new(p.TIM3, Some(ch_a_left), Some(ch_b_left), None, None, khz(10), Default::default());
+    pwm_l.enable(Channel::Ch1);
+    pwm_l.enable(Channel::Ch2);
+    let max_l = pwm_l.get_max_duty();
+
     info!("PWM initialized");
-    info!("PWM max duty {}", max_r);
+    info!("Right PWM max duty {}", max_r);
+    info!("Left PWM max duty {}", max_l);
 
     loop {
         button.wait_for_rising_edge().await;
-        pwm_r.set_duty(Channel::Ch1, max_r);
-        pwm_r.set_duty(Channel::Ch2, 0);
-        Timer::after_millis(1500).await;
         pwm_r.set_duty(Channel::Ch1, 0);
         pwm_r.set_duty(Channel::Ch2, max_r);
-        Timer::after_millis(1000).await;
+        pwm_l.set_duty(Channel::Ch1, max_l);
+        pwm_l.set_duty(Channel::Ch2, 0);
+        Timer::after_millis(500).await;
+        pwm_r.set_duty(Channel::Ch1, max_r);
         pwm_r.set_duty(Channel::Ch2, 0);
+        pwm_l.set_duty(Channel::Ch1, 0);
+        pwm_l.set_duty(Channel::Ch2, max_l);
+        Timer::after_millis(500).await;
+        pwm_r.set_duty(Channel::Ch1, 0);
+        pwm_l.set_duty(Channel::Ch2, 0);
     }
 }
