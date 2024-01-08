@@ -5,13 +5,17 @@
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::OutputType;
-use embassy_stm32::time::khz;
+use embassy_stm32::time::{Hertz, khz};
 use embassy_stm32::timer::simple_pwm::{PwmPin, SimplePwm};
 use embassy_stm32::timer::Channel;
 use embassy_time::Timer;
-//use embassy_stm32::gpio::{Input, Pull};
-use embassy_stm32::gpio::{Input, Pull};
+use embassy_stm32::dma::NoDma;
+use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::spi;
+use embassy_stm32::spi::BitOrder::MsbFirst;
+use embassy_stm32::spi::Polarity::IdleHigh;
+use embassy_stm32::spi::Phase::CaptureOnSecondTransition;
 use {defmt_rtt as _, panic_probe as _};
 
 #[embassy_executor::main]
@@ -42,6 +46,26 @@ async fn main(_spawner: Spawner) {
     info!("Right PWM max duty {}", max_r);
     info!("Left PWM max duty {}", max_l);
 
+    let mut spi_config = spi::Config::default();
+    spi_config.bit_order = MsbFirst;
+    spi_config.frequency = Hertz(1_000_000);
+    spi_config.mode.polarity = IdleHigh;
+    spi_config.mode.phase = CaptureOnSecondTransition;
+    let mut imu_spi = spi::Spi::new(p.SPI1, p.PA5, p.PA7, p.PA6, NoDma, NoDma, spi_config);
+
+    let mut cs = Output::new(p.PA4, Level::High, Speed::VeryHigh);
+
+    let mut buf: [u8; 1] = [0x8F];
+    let mut rbuf: [u8; 1] = [0x98];
+    cs.set_low();
+    unwrap!(imu_spi.blocking_write(&mut buf));
+    unwrap!(imu_spi.blocking_read(&mut rbuf));
+    cs.set_high();
+    for i in rbuf {
+        println!("0x{:x}", i);
+    }
+
+    /*
     loop {
         button.wait_for_rising_edge().await;
         pwm_r.set_duty(Channel::Ch1, 0);
@@ -57,4 +81,5 @@ async fn main(_spawner: Spawner) {
         pwm_r.set_duty(Channel::Ch1, 0);
         pwm_l.set_duty(Channel::Ch2, 0);
     }
+    */
 }
