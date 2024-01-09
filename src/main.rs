@@ -5,20 +5,59 @@
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::Config;
-use embassy_stm32::gpio::OutputType;
 use embassy_stm32::time::khz;
 use embassy_stm32::timer::simple_pwm::{PwmPin, SimplePwm};
 use embassy_stm32::timer::Channel;
 use embassy_time::{Delay, Timer};
-use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
+use embassy_stm32::gpio::{AnyPin, Input, Level, Output, OutputType, Pin, Pull, Speed};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::adc::{Adc, SampleTime};
+use embassy_stm32::peripherals::{ADC2, PC0, PC1, PC2, PC3, PA0, PA1, PA2};
 use embassy_stm32::rcc::{AdcClockSource, ClockSrc, Pll, PllMul, PllPreDiv, PllRDiv, PllSource};
 
 use {defmt_rtt as _, panic_probe as _};
 
+struct Detectors {
+   mf_diode: PC3,
+   lf_diode: PC0,
+   l1_diode: PC1,
+   l2_diode: PC2,
+   rf_diode: PA2,
+   r1_diode: PA1,
+   r2_diode: PA0,
+}
+
+#[embassy_executor::task]
+async fn diode_transducer(mut emitters: [Output<'static, AnyPin>; 6], mut detectors: Detectors, mut diode_adc: Adc<'static, ADC2>) {
+    diode_adc.set_sample_time(SampleTime::Cycles24_5);
+    loop {
+        for e in &mut emitters {
+            e.set_high();
+        }
+        let mf_diode = diode_adc.read(&mut detectors.mf_diode);
+        let lf_diode = diode_adc.read(&mut detectors.lf_diode);
+        let l1_diode = diode_adc.read(&mut detectors.l1_diode);
+        let l2_diode = diode_adc.read(&mut detectors.l2_diode);
+        let rf_diode = diode_adc.read(&mut detectors.rf_diode);
+        let r1_diode = diode_adc.read(&mut detectors.r1_diode);
+        let r2_diode = diode_adc.read(&mut detectors.r2_diode);
+        info!("
+            mf diode: {}
+            lf diode: {} l1_diode: {} l2_diode: {}
+            rf_diode: {} r1_diode: {} r2_diode: {}",
+            mf_diode, lf_diode, l1_diode,
+            l2_diode, rf_diode, r1_diode, r2_diode);
+        Timer::after_millis(100).await;
+        for e in &mut emitters {
+            e.set_low();
+        }
+        Timer::after_millis(100).await;
+    }
+
+}
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
 
     let mut config = Config::default();
     config.rcc.hsi = true;
@@ -33,7 +72,7 @@ async fn main(_spawner: Spawner) {
         divq: None,
         divr: Some(PllRDiv::DIV2),
     });
-    let mut p = embassy_stm32::init(config);
+    let p = embassy_stm32::init(config);
     info!("Muskrat OS!");
 
 
@@ -60,39 +99,30 @@ async fn main(_spawner: Spawner) {
     info!("Right PWM max duty {}", max_r);
     info!("Left PWM max duty {}", max_l);
 
-    //ADC12_IN7
-    let mut mf_emitter_1 = Output::new(p.PD4, Level::High, Speed::High);
-    let mut mf_emitter_2 = Output::new(p.PD5, Level::High, Speed::High);
-    let mut lf_emitter = Output::new(p.PD7, Level::High, Speed::High);
-    let mut l_emitter = Output::new(p.PD6, Level::High, Speed::High);
-    let mut rf_emitter = Output::new(p.PD2, Level::High, Speed::High);
-    let mut r_emitter = Output::new(p.PD3, Level::High, Speed::High);
-    mf_emitter_1.set_high();
-    mf_emitter_2.set_high();
-    lf_emitter.set_high();
-    l_emitter.set_high();
-    rf_emitter.set_high();
-    r_emitter.set_high();
+    let emitters = [
+        Output::new(p.PD4.degrade(), Level::High, Speed::High), //mf_emitter_1
+        Output::new(p.PD5.degrade(), Level::High, Speed::High), //mf_emitter_2
+        Output::new(p.PD7.degrade(), Level::High, Speed::High), //lf_emitter
+        Output::new(p.PD6.degrade(), Level::High, Speed::High), //l_emitter
+        Output::new(p.PD2.degrade(), Level::High, Speed::High), //rf_emitter
+        Output::new(p.PD3.degrade(), Level::High, Speed::High), //r_emitter
+    ];
+
+    let detectors = Detectors{
+       mf_diode: p.PC3,
+       lf_diode: p.PC0,
+       l1_diode: p.PC1,
+       l2_diode: p.PC2,
+       rf_diode: p.PA2,
+       r1_diode: p.PA1,
+       r2_diode: p.PA0,
+    };
+
     let mut diode_adc = Adc::new(p.ADC2, &mut Delay);
     diode_adc.set_sample_time(SampleTime::Cycles24_5);
-    loop {
-        let mf_diode = diode_adc.read(&mut p.PC3);
-        let lf_diode = diode_adc.read(&mut p.PC0);
-        let l1_diode = diode_adc.read(&mut p.PC1);
-        let l2_diode = diode_adc.read(&mut p.PC2);
-        let rf_diode = diode_adc.read(&mut p.PA2);
-        let r1_diode = diode_adc.read(&mut p.PA1);
-        let r2_diode = diode_adc.read(&mut p.PA0);
-        info!("
-            mf diode: {}
-            lf diode: {} l1_diode: {} l2_diode: {}
-            rf_diode: {} r1_diode: {} r2_diode: {}",
-            mf_diode, lf_diode, l1_diode,
-            l2_diode, rf_diode, r1_diode, r2_diode);
-        Timer::after_millis(200).await;
-    }
 
-    /*
+    spawner.spawn(diode_transducer(emitters, detectors, diode_adc)).ok();
+
     loop {
         button.wait_for_rising_edge().await;
         pwm_r.set_duty(Channel::Ch1, 0);
@@ -108,5 +138,4 @@ async fn main(_spawner: Spawner) {
         pwm_r.set_duty(Channel::Ch1, 0);
         pwm_l.set_duty(Channel::Ch2, 0);
     }
-    */
 }
