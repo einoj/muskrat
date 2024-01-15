@@ -12,7 +12,7 @@ use embassy_time::{Delay, Timer};
 use embassy_stm32::gpio::{AnyPin, Input, Level, Output, OutputType, Pin, Pull, Speed};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::adc::{Adc, SampleTime};
-use embassy_stm32::peripherals::{ADC2, PC0, PC1, PC2, PC3, PA0, PA1, PA2};
+use embassy_stm32::peripherals::{ADC2, PC0, PC1, PC2, PC3, PA0, PA1, PA2, TIM3, TIM4};
 use embassy_stm32::rcc::{AdcClockSource, ClockSrc, Pll, PllMul, PllPreDiv, PllRDiv, PllSource};
 
 use {defmt_rtt as _, panic_probe as _};
@@ -25,6 +25,51 @@ struct Detectors {
    rf_diode: PA2,
    r1_diode: PA1,
    r2_diode: PA0,
+}
+
+pub struct MotorDriver {
+    pwm_r: SimplePwm<'static, TIM4>,
+    pwm_l: SimplePwm<'static, TIM3>,
+    speed_r: u16,
+    speed_l: u16,
+}
+
+impl MotorDriver {
+    pub fn new(pwm_r: SimplePwm<'static, TIM4>, pwm_l: SimplePwm<'static, TIM3>) -> Self {
+        Self {
+            pwm_r,
+            pwm_l,
+            speed_r: 0,
+            speed_l: 0,
+        }
+    }
+
+    pub fn set_right_speed(&mut self, speed: u16) {
+        self.speed_r = speed;
+        self.pwm_r.set_duty(Channel::Ch1, 0);
+        self.pwm_r.set_duty(Channel::Ch2, self.speed_r);
+    }
+
+    pub fn set_left_speed(&mut self, speed: u16) {
+        self.speed_l = speed;
+        self.pwm_l.set_duty(Channel::Ch1, self.speed_l);
+        self.pwm_l.set_duty(Channel::Ch2, 0);
+    }
+
+}
+
+#[embassy_executor::task]
+async fn motor_driver(mut pwm_r: SimplePwm<'static, TIM4>,
+                      mut pwm_l: SimplePwm<'static, TIM3>,
+                      speed_r: u16,
+                      speed_l: u16) {
+
+    loop {
+        pwm_r.set_duty(Channel::Ch1, 0);
+        pwm_r.set_duty(Channel::Ch2, speed_r);
+        pwm_l.set_duty(Channel::Ch1, speed_l);
+        pwm_l.set_duty(Channel::Ch2, 0);
+    }
 }
 
 #[embassy_executor::task]
@@ -122,20 +167,15 @@ async fn main(spawner: Spawner) {
     diode_adc.set_sample_time(SampleTime::Cycles24_5);
 
     spawner.spawn(diode_transducer(emitters, detectors, diode_adc)).ok();
-
+    button.wait_for_rising_edge().await;
+    let mut motor_driver = MotorDriver::new(pwm_r, pwm_l);
     loop {
         button.wait_for_rising_edge().await;
-        pwm_r.set_duty(Channel::Ch1, 0);
-        pwm_r.set_duty(Channel::Ch2, max_r);
-        pwm_l.set_duty(Channel::Ch1, max_l);
-        pwm_l.set_duty(Channel::Ch2, 0);
+        motor_driver.set_left_speed(4500);
+        motor_driver.set_right_speed(4500);
         Timer::after_millis(500).await;
-        pwm_r.set_duty(Channel::Ch1, max_r);
-        pwm_r.set_duty(Channel::Ch2, 0);
-        pwm_l.set_duty(Channel::Ch1, 0);
-        pwm_l.set_duty(Channel::Ch2, max_l);
-        Timer::after_millis(500).await;
-        pwm_r.set_duty(Channel::Ch1, 0);
-        pwm_l.set_duty(Channel::Ch2, 0);
+        motor_driver.set_right_speed(0);
+        motor_driver.set_left_speed(0);
     }
+
 }
