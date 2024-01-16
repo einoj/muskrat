@@ -8,7 +8,7 @@ use embassy_stm32::Config;
 use embassy_stm32::time::khz;
 use embassy_stm32::timer::simple_pwm::{PwmPin, SimplePwm};
 use embassy_stm32::timer::Channel;
-use embassy_time::{Delay, Timer};
+use embassy_time::Delay;
 use embassy_stm32::gpio::{AnyPin, Input, Level, Output, OutputType, Pin, Pull, Speed};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::adc::{Adc, SampleTime};
@@ -19,10 +19,10 @@ use {defmt_rtt as _, panic_probe as _};
 
 struct Detectors {
    mf_diode: PC3,
-   lf_diode: PC0,
+   _lf_diode: PC0,
    l1_diode: PC1,
    l2_diode: PC2,
-   rf_diode: PA2,
+   _rf_diode: PA2,
    r1_diode: PA1,
    r2_diode: PA0,
 }
@@ -56,53 +56,75 @@ impl MotorDriver {
         self.pwm_l.set_duty(Channel::Ch2, 0);
     }
 
-}
+    pub fn go_forward(&mut self) {
+        self.pwm_l.set_duty(Channel::Ch1, self.speed_l);
+        self.pwm_l.set_duty(Channel::Ch2, 0);
 
-#[embassy_executor::task]
-async fn motor_driver(mut pwm_r: SimplePwm<'static, TIM4>,
-                      mut pwm_l: SimplePwm<'static, TIM3>,
-                      speed_r: u16,
-                      speed_l: u16) {
-
-    loop {
-        pwm_r.set_duty(Channel::Ch1, 0);
-        pwm_r.set_duty(Channel::Ch2, speed_r);
-        pwm_l.set_duty(Channel::Ch1, speed_l);
-        pwm_l.set_duty(Channel::Ch2, 0);
+        self.pwm_r.set_duty(Channel::Ch1, 0);
+        self.pwm_r.set_duty(Channel::Ch2, self.speed_r);
     }
+
+    pub fn turn_left(&mut self) {
+        self.pwm_l.set_duty(Channel::Ch1, 0);
+        self.pwm_l.set_duty(Channel::Ch2, self.speed_l);
+
+        self.pwm_r.set_duty(Channel::Ch1, 0);
+        self.pwm_r.set_duty(Channel::Ch2, self.speed_r);
+    }
+
+    pub fn turn_right(&mut self) {
+        self.pwm_r.set_duty(Channel::Ch1, self.speed_l);
+        self.pwm_r.set_duty(Channel::Ch2, 0);
+
+        self.pwm_l.set_duty(Channel::Ch1, self.speed_r);
+        self.pwm_l.set_duty(Channel::Ch2, 0);
+    }
+
 }
 
-#[embassy_executor::task]
-async fn diode_transducer(mut emitters: [Output<'static, AnyPin>; 6], mut detectors: Detectors, mut diode_adc: Adc<'static, ADC2>) {
-    diode_adc.set_sample_time(SampleTime::Cycles24_5);
-    loop {
-        for e in &mut emitters {
+pub struct SensorReadings{
+    front: u16,
+    left: u16,
+    right: u16,
+}
+pub struct Diodes {
+    emitters: [Output<'static, AnyPin>; 6],
+    detectors: Detectors,
+    diode_adc: Adc<'static, ADC2>,
+}
+
+impl Diodes {
+    fn new(emitters: [Output<'static, AnyPin>; 6], detectors: Detectors, diode_adc: Adc<'static, ADC2>) -> Self {
+        Self {
+            emitters,
+            detectors,
+            diode_adc,
+        }
+    }
+    fn get_sensor_readings(&mut self) -> SensorReadings {
+        self.diode_adc.set_sample_time(SampleTime::Cycles24_5);
+        for e in &mut self.emitters {
             e.set_high();
         }
-        let mf_diode = diode_adc.read(&mut detectors.mf_diode);
-        let lf_diode = diode_adc.read(&mut detectors.lf_diode);
-        let l1_diode = diode_adc.read(&mut detectors.l1_diode);
-        let l2_diode = diode_adc.read(&mut detectors.l2_diode);
-        let rf_diode = diode_adc.read(&mut detectors.rf_diode);
-        let r1_diode = diode_adc.read(&mut detectors.r1_diode);
-        let r2_diode = diode_adc.read(&mut detectors.r2_diode);
-        info!("
-            mf diode: {}
-            lf diode: {} l1_diode: {} l2_diode: {}
-            rf_diode: {} r1_diode: {} r2_diode: {}",
-            mf_diode, lf_diode, l1_diode,
-            l2_diode, rf_diode, r1_diode, r2_diode);
-        Timer::after_millis(100).await;
-        for e in &mut emitters {
+
+        let mut d = SensorReadings {front: 0, left: 0, right: 0};
+        // ignore left and right front facing diodes for now
+        d.front = self.diode_adc.read(&mut self.detectors.mf_diode);
+        let l1_diode = self.diode_adc.read(&mut self.detectors.l1_diode);
+        let l2_diode = self.diode_adc.read(&mut self.detectors.l2_diode);
+        d.left = (l1_diode+l2_diode)/2;
+        let r1_diode = self.diode_adc.read(&mut self.detectors.r1_diode);
+        let r2_diode = self.diode_adc.read(&mut self.detectors.r2_diode);
+        d.right = (r1_diode+r2_diode)/2;
+        for e in &mut self.emitters {
             e.set_low();
         }
-        Timer::after_millis(100).await;
+        return d;
     }
-
 }
 
 #[embassy_executor::main]
-async fn main(spawner: Spawner) {
+async fn main(_spawner: Spawner) {
 
     let mut config = Config::default();
     config.rcc.hsi = true;
@@ -155,27 +177,32 @@ async fn main(spawner: Spawner) {
 
     let detectors = Detectors{
        mf_diode: p.PC3,
-       lf_diode: p.PC0,
+       _lf_diode: p.PC0,
        l1_diode: p.PC1,
        l2_diode: p.PC2,
-       rf_diode: p.PA2,
+       _rf_diode: p.PA2,
        r1_diode: p.PA1,
        r2_diode: p.PA0,
     };
 
     let mut diode_adc = Adc::new(p.ADC2, &mut Delay);
     diode_adc.set_sample_time(SampleTime::Cycles24_5);
+    let mut diodes = Diodes::new(emitters, detectors, diode_adc);
 
-    spawner.spawn(diode_transducer(emitters, detectors, diode_adc)).ok();
     button.wait_for_rising_edge().await;
     let mut motor_driver = MotorDriver::new(pwm_r, pwm_l);
+    motor_driver.set_left_speed(3250);
+    motor_driver.set_right_speed(3000);
     loop {
-        button.wait_for_rising_edge().await;
-        motor_driver.set_left_speed(4500);
-        motor_driver.set_right_speed(4500);
-        Timer::after_millis(500).await;
-        motor_driver.set_right_speed(0);
-        motor_driver.set_left_speed(0);
+        let sensor_data = diodes.get_sensor_readings();
+        if sensor_data.left > 0 {
+            motor_driver.turn_right();
+        } else if sensor_data.right > 0 {
+            motor_driver.turn_left();
+        } else if sensor_data.front > 0 {
+            motor_driver.turn_right();
+        } else {
+            motor_driver.go_forward();
+        }
     }
-
 }
